@@ -4,6 +4,7 @@ import time
 import urllib3
 import requests
 import unicodedata
+import pytz
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 from selenium import webdriver
@@ -18,6 +19,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 os.environ['WDM_SSL_VERIFY'] = '0'
 ssl._create_default_https_context = ssl._create_unverified_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- CASOVE PASMO ---
+PRG_TZ = pytz.timezone('Europe/Prague')
 
 # --- KONFIGURACE TERMINU ---
 MIN_HOUR = 17
@@ -42,17 +46,16 @@ RECIPIENTS = [
 DAYS_MAP = {0: "Po", 1: "Ut", 2: "St", 3: "Ct", 4: "Pa", 5: "So", 6: "Ne"}
 
 def remove_diacritics(text):
-    """Odstrani hacky a carky z textu."""
     normalized = unicodedata.normalize('NFKD', text)
     return "".join([c for c in normalized if not unicodedata.combining(c)])
 
-def ticks_to_local_datetime(ticks):
+def ticks_to_prg_datetime(ticks):
+    """Prevede ticks z webu primo na prazsky cas."""
     dt_utc = datetime(1, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=ticks // 10)
-    return dt_utc.astimezone()
+    return dt_utc.astimezone(PRG_TZ)
 
 def send_whatsapp(message):
     clean_msg = remove_diacritics(message)
-
     for phone, api_key in RECIPIENTS:
         if not phone or not api_key or "XXXXXX" in api_key:
             continue
@@ -81,16 +84,18 @@ def scan_current_day(driver, wait, target_date):
             try:
                 s_ticks = int(apt.get_attribute("data-start-time-utc"))
                 e_ticks = int(apt.get_attribute("data-end-time-utc"))
-                curr = ticks_to_local_datetime(s_ticks)
-                end = ticks_to_local_datetime(e_ticks)
+                curr = ticks_to_prg_datetime(s_ticks)
+                end = ticks_to_prg_datetime(e_ticks)
                 while curr < end:
                     slots_counter[curr] += 1
                     curr += timedelta(minutes=30)
             except: continue
 
         times_in_day = []
-        check_time = target_date.replace(hour=MIN_HOUR, minute=0, second=0, microsecond=0).astimezone()
-        end_limit = target_date.replace(hour=MAX_HOUR, minute=0, second=0, microsecond=0).astimezone()
+
+        # Nastaveni limitu v prazskem case
+        check_time = PRG_TZ.localize(target_date.replace(hour=MIN_HOUR, minute=0, second=0))
+        end_limit = PRG_TZ.localize(target_date.replace(hour=MAX_HOUR, minute=0, second=0))
 
         while check_time < end_limit:
             next_time = check_time + timedelta(minutes=30)
@@ -122,11 +127,14 @@ def run_checker():
         time.sleep(2)
 
         report_lines = []
+        now_prg = datetime.now(PRG_TZ)
+
         for target_date in MY_DATES:
-            if target_date.date() < datetime.now().date():
+            # Kontrola, zda den jiz neprosel
+            if target_date.date() < now_prg.date():
                 continue
 
-            print(f"Proveruji datum: {target_date.strftime('%d.%m.')}")
+            print(f"Proveruji: {target_date.strftime('%d.%m.')}")
             js_goto = f"ASPxClientControl.GetControlCollection().GetByName('ctl00_PageContent_Scheduler').GotoDate(new Date({target_date.year}, {target_date.month - 1}, {target_date.day}));"
             driver.execute_script(js_goto)
 
@@ -141,7 +149,7 @@ def run_checker():
             with open(cache_file, "r") as f: old_report = f.read()
 
         if new_report == old_report:
-            print("Zadna zmena. Zprava se neposila.")
+            print("Zadna zmena v terminech.")
         else:
             if new_report:
                 msg = "*BADMINTON - NOVE TERMINY:* \n\n" + new_report
