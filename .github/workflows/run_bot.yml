@@ -2,7 +2,7 @@ name: Badminton Checker Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '23 * * * *'
   workflow_dispatch:
 
 jobs:
