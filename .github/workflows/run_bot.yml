@@ -1,0 +1,41 @@
+name: Badminton Checker Bot
+
+on:
+  schedule:
+    # Čas je v UTC. 07:00 UTC je cca 08:00 nebo 09:00 ráno v ČR (podle letního času).
+    # Spouští se každý den.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Umožňuje spustit skript ručně kliknutím na tlačítko v GitHubu
+
+jobs:
+  check-badminton:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip' # Urychlí příští běhy díky mezipaměti knihoven
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Badminton Script
+        env:
+          # Tyto proměnné si GitHub vytáhne z tvého nastavení "Secrets"
+          WA_PHONE: ${{ secrets.WA_PHONE }}
+          WA_API_KEY: ${{ secrets.WA_API_KEY }}
+        run: python init.py
+
+      - name: Upload logs (optional)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot
+          path: ./*.png # Pokud bys v kódu přidal driver.save_screenshot() při chybě
