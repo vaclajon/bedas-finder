@@ -38,6 +38,7 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_LIST: ${{ secrets.EMAIL_LIST }}
+        run: python init.py
 
       - name: Ulozit zmeny zpet do repozitare
         uses: stefanzweifel/git-auto-commit-action@v5
