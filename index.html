@@ -299,8 +299,12 @@
             reportContainer.innerHTML = '<span class="text-gray-400 text-sm flex items-center space-x-2"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Načítám poslední data...</span></span>';
             lucide.createIcons();
 
-            const response = await fetch(`https://api.github.com/repos/${repo}/contents/last_report.txt`, {
-                headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' }
+            const timestamp = new Date().getTime();
+            const response = await fetch(`https://api.github.com/repos/${repo}/contents/last_report.txt?t=${timestamp}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
             });
 
             if (response.status === 404) {
