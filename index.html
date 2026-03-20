@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Badminton Bot - Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Toast animace */
+        @keyframes slideIn {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .toast-enter { animation: slideIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen font-sans selection:bg-blue-200">
+
+<div class="max-w-2xl mx-auto p-4 sm:p-6 lg:p-8">
+    <!-- Hlavicka -->
+    <header class="flex items-center space-x-3 mb-8">
+        <div class="bg-blue-600 p-2.5 rounded-xl text-white shadow-sm">
+            <i data-lucide="calendar-clock" class="w-6 h-6"></i>
+        </div>
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 leading-tight">Badminton Bot</h1>
+            <p class="text-sm text-gray-500">Správa hlídaných termínů</p>
+        </div>
+    </header>
+
+    <!-- Konfigurace GitHubu -->
+    <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+        <div class="flex items-center justify-between mb-4 cursor-pointer" onclick="toggleSettings()">
+            <h2 class="text-lg font-semibold flex items-center space-x-2">
+                <i data-lucide="settings-2" class="w-5 h-5 text-gray-400"></i>
+                <span>Nastavení napojení (GitHub)</span>
+            </h2>
+            <i data-lucide="chevron-down" id="settings-chevron" class="w-5 h-5 text-gray-400 transition-transform"></i>
+        </div>
+
+        <div id="settings-content" class="space-y-4">
+            <p class="text-sm text-gray-500 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                Údaje se ukládají <b>pouze do tvého prohlížeče</b> (localStorage). Nikdy neukládej GitHub Token přímo do kódu na GitHubu!
+            </p>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Repozitář (např. pepa/badminton)</label>
+                <input type="text" id="repoInput" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none" placeholder="uzivatel/repozitar">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">GitHub Personal Access Token (PAT)</label>
+                <input type="password" id="tokenInput" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+            </div>
+            <button onclick="saveSettingsAndLoad()" class="w-full bg-gray-900 hover:bg-gray-800 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center space-x-2">
+                <i data-lucide="download-cloud" class="w-4 h-4"></i>
+                <span>Uložit údaje a načíst termíny</span>
+            </button>
+        </div>
+    </section>
+
+    <!-- Sprava terminu -->
+    <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div class="flex items-center justify-between mb-6">
+            <h2 class="text-lg font-semibold flex items-center space-x-2">
+                <i data-lucide="calendar-days" class="w-5 h-5 text-blue-500"></i>
+                <span>Hlídané termíny</span>
+            </h2>
+            <span id="loader" class="hidden text-sm text-blue-600 flex items-center space-x-1">
+                    <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                    <span>Načítám...</span>
+                </span>
+        </div>
+
+        <!-- Pridani noveho terminu -->
+        <form id="addDateForm" class="flex gap-2 mb-6" onsubmit="event.preventDefault(); addDate();">
+            <input type="date" id="newDateInput" required class="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none">
+            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center">
+                <i data-lucide="plus" class="w-5 h-5"></i>
+                <span class="hidden sm:inline ml-1">Přidat</span>
+            </button>
+        </form>
+
+        <!-- Seznam -->
+        <ul id="datesList" class="space-y-2 mb-6 min-h-[100px] empty:bg-gray-50 empty:rounded-lg empty:border empty:border-dashed empty:border-gray-200">
+            <!-- Zde se generuji terminy -->
+        </ul>
+
+        <button onclick="saveToGitHub()" id="saveBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg transition-colors flex items-center justify-center space-x-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+            <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+            <span>Uložit změny do GitHubu</span>
+        </button>
+    </section>
+</div>
+
+<!-- Toast zprava -->
+<div id="toast" class="fixed bottom-4 right-4 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-3 hidden z-50">
+    <i data-lucide="info" class="w-5 h-5 text-blue-400" id="toast-icon"></i>
+    <span id="toast-msg">Zpráva</span>
+</div>
+
+<script>
+    // --- STAV APLIKACE ---
+    let currentDates = [];
+    let fileSha = null; // Nutne pro upravu souboru pres API
+
+    // --- INICIALIZACE ---
+    lucide.createIcons();
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedRepo = localStorage.getItem('bb_repo');
+        const savedToken = localStorage.getItem('bb_token');
+
+        if (savedRepo) document.getElementById('repoInput').value = savedRepo;
+        if (savedToken) document.getElementById('tokenInput').value = savedToken;
+
+        if (savedRepo && savedToken) {
+            toggleSettings(false); // Zavrit nastaveni
+            loadFromGitHub();
+        } else {
+            renderList();
+        }
+    });
+
+    // --- UI FUNKCE ---
+    function toggleSettings(forceState) {
+        const content = document.getElementById('settings-content');
+        const chevron = document.getElementById('settings-chevron');
+        const isHidden = content.classList.contains('hidden');
+        const targetState = forceState !== undefined ? forceState : isHidden;
+
+        if (targetState) {
+            content.classList.remove('hidden');
+            chevron.style.transform = 'rotate(0deg)';
+        } else {
+            content.classList.add('hidden');
+            chevron.style.transform = 'rotate(180deg)';
+        }
+    }
+
+    function showToast(msg, type = 'info') {
+        const toast = document.getElementById('toast');
+        document.getElementById('toast-msg').textContent = msg;
+
+        const icon = document.getElementById('toast-icon');
+        icon.setAttribute('data-lucide', type === 'error' ? 'alert-circle' : (type === 'success' ? 'check-circle' : 'info'));
+        icon.className = `w-5 h-5 ${type === 'error' ? 'text-red-400' : (type === 'success' ? 'text-green-400' : 'text-blue-400')}`;
+        lucide.createIcons();
+
+        toast.classList.remove('hidden');
+        toast.classList.add('toast-enter');
+
+        setTimeout(() => {
+            toast.classList.add('hidden');
+            toast.classList.remove('toast-enter');
+        }, 3000);
+    }
+
+    function renderList() {
+        const list = document.getElementById('datesList');
+        list.innerHTML = '';
+
+        // Serazeni dat
+        currentDates.sort();
+
+        if (currentDates.length === 0) {
+            list.innerHTML = '<li class="text-center py-8 text-gray-400 text-sm">Zatím nejsou přidány žádné termíny.</li>';
+            return;
+        }
+
+        currentDates.forEach((date, index) => {
+            // Prevod na cesky format DD. MM. YYYY
+            const [y, m, d] = date.split('-');
+            const displayDate = `${parseInt(d)}. ${parseInt(m)}. ${y}`;
+
+            const li = document.createElement('li');
+            li.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100 group';
+            li.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <i data-lucide="calendar" class="w-4 h-4 text-gray-400"></i>
+                        <span class="font-medium text-gray-700">${displayDate}</span>
+                        <span class="text-xs text-gray-400">(${date})</span>
+                    </div>
+                    <button onclick="removeDate(${index})" class="text-gray-400 hover:text-red-500 p-1 transition-colors" title="Smazat">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                `;
+            list.appendChild(li);
+        });
+        lucide.createIcons();
+    }
+
+    // --- LOGIKA DAT ---
+    function addDate() {
+        const input = document.getElementById('newDateInput');
+        const dateVal = input.value;
+        if (!dateVal) return;
+
+        if (currentDates.includes(dateVal)) {
+            showToast('Tento termín už je v seznamu.', 'error');
+            return;
+        }
+
+        currentDates.push(dateVal);
+        input.value = '';
+        renderList();
+    }
+
+    function removeDate(index) {
+        currentDates.splice(index, 1);
+        renderList();
+    }
+
+    function saveSettingsAndLoad() {
+        const repo = document.getElementById('repoInput').value.trim();
+        const token = document.getElementById('tokenInput').value.trim();
+
+        if (!repo || !token) {
+            showToast('Vyplň repozitář i token.', 'error');
+            return;
+        }
+
+        localStorage.setItem('bb_repo', repo);
+        localStorage.setItem('bb_token', token);
+        toggleSettings(false);
+        loadFromGitHub();
+    }
+
+    // --- GITHUB API ---
+    async function loadFromGitHub() {
+        const repo = localStorage.getItem('bb_repo');
+        const token = localStorage.getItem('bb_token');
+        const loader = document.getElementById('loader');
+
+        if (!repo || !token) return;
+
+        try {
+            loader.classList.remove('hidden');
+            const response = await fetch(`https://api.github.com/repos/${repo}/contents/config.json`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.status === 404) {
+                showToast('Soubor config.json nebyl v repozitáři nalezen.', 'error');
+                fileSha = null;
+                return;
+            }
+
+            if (!response.ok) throw new Error('API vrátilo chybu: ' + response.statusText);
+
+            const data = await response.json();
+            fileSha = data.sha; // SHA je potreba pro zmenu souboru
+
+            // Dekodovani Base64 UTF-8 z GitHubu
+            const jsonString = decodeURIComponent(escape(atob(data.content)));
+            const configData = JSON.parse(jsonString);
+
+            currentDates = configData.dates || [];
+            renderList();
+            showToast('Termíny úspěšně načteny!', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('Chyba při načítání dat.', 'error');
+        } finally {
+            loader.classList.add('hidden');
+        }
+    }
+
+    async function saveToGitHub() {
+        const repo = localStorage.getItem('bb_repo');
+        const token = localStorage.getItem('bb_token');
+        const btn = document.getElementById('saveBtn');
+
+        if (!repo || !token) {
+            showToast('Nejprve nastav repozitář a token.', 'error');
+            toggleSettings(true);
+            return;
+        }
+
+        if (!fileSha) {
+            showToast('Nemám SHA souboru. Zkus nejprve načíst data.', 'error');
+            return;
+        }
+
+        const newContent = { dates: currentDates };
+        // Prevod do Base64 pro GitHub API (podpora UTF-8)
+        const base64Content = btoa(unescape(encodeURIComponent(JSON.stringify(newContent, null, 2))));
+
+        try {
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i><span>Ukládám...</span>`;
+            lucide.createIcons();
+
+            const response = await fetch(`https://api.github.com/repos/${repo}/contents/config.json`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: 'Aktualizace termínů přes Web Admin',
+                    content: base64Content,
+                    sha: fileSha
+                })
+            });
+
+            if (!response.ok) throw new Error('Chyba při ukládání');
+
+            const data = await response.json();
+            fileSha = data.content.sha; // Aktualizace SHA pro dalsi zmeny
+            showToast('Úspěšně uloženo do GitHubu!', 'success');
+        } catch (error) {
+            console.error(error);
+            showToast('Nepodařilo se uložit změny.', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="upload-cloud" class="w-5 h-5"></i><span>Uložit změny do GitHubu</span>`;
+            lucide.createIcons();
+        }
+    }
+</script>
+</body>
+</html>

@@ -28,14 +28,17 @@ MIN_HOUR = 17
 MAX_HOUR = 21
 MAX_COURTS = 12
 
-# Dny, ktere chces hlidat (RRRR, M, D)
-MY_DATES = [
-    datetime(2026, 3, 31),
-    datetime(2026, 4, 1),
-    datetime(2026, 4, 2),
-    datetime(2026, 4, 9),
-    datetime(2026, 4, 14)
-]
+import json
+
+MY_DATES = []
+try:
+    with open("config.json", "r", encoding="utf-8") as f:
+        config = json.load(f)
+        # Ocekava format YYYY-MM-DD
+        for d_str in config.get("dates", []):
+            MY_DATES.append(datetime.strptime(d_str, "%Y-%m-%d"))
+except Exception as e:
+    print(f"[VAROVANI] Nepodarilo se nacist config.json: {e}")
 
 # --- PRIJEMCI (Nacitaji se z GitHub Secrets) ---
 RECIPIENTS = [
@@ -61,10 +64,13 @@ def send_whatsapp(message):
             continue
         url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={requests.utils.quote(clean_msg)}&apikey={api_key}"
         try:
-            requests.get(url, timeout=10, verify=False)
-            print(f"[OK] Odeslano na {phone[:6]}***")
+            response = requests.get(url, timeout=10, verify=False)
+            if response.status_code == 200:
+                print(f"[OK] WhatsApp zprava odeslana na {phone[:6]}***")
+            else:
+                print(f"[CHYBA] CallMeBot API vratilo status {response.status_code} pro {phone}")
         except Exception as e:
-            print(f"[CHYBA] Selhalo odesilani pro {phone}: {e}")
+            print(f"[CHYBA] Selhalo odesilani WhatsApp pro {phone}: {e}")
 
 def scan_current_day(driver, wait, target_date):
     day_str_short = target_date.strftime('%d.%m.')
@@ -73,8 +79,9 @@ def scan_current_day(driver, wait, target_date):
     layer_id = "ctl00_PageContent_Scheduler_containerBlock_verticalContainerappointmentLayer"
 
     try:
+        # Cekame, az se AJAXem nacte spravne datum v hlavicce
         wait.until(EC.text_to_be_present_in_element((By.ID, header_id), day_str_short))
-        time.sleep(2)
+        time.sleep(1) # Kratka pauza pro jistotu dokresleni elementu
 
         wait.until(EC.presence_of_element_located((By.ID, layer_id)))
         appointments = driver.find_element(By.ID, layer_id).find_elements(By.CLASS_NAME, "dxscApt")
@@ -86,17 +93,22 @@ def scan_current_day(driver, wait, target_date):
                 e_ticks = int(apt.get_attribute("data-end-time-utc"))
                 curr = ticks_to_prg_datetime(s_ticks)
                 end = ticks_to_prg_datetime(e_ticks)
+
+                # Zapis obsazenosti po 30 min blocich
                 while curr < end:
                     slots_counter[curr] += 1
                     curr += timedelta(minutes=30)
-            except: continue
+            except Exception as e_apt:
+                # Preskocime konkretni rozbity element, ale neukoncujeme celou funkci
+                continue
 
         times_in_day = []
 
-        # Nastaveni limitu v prazskem case
+        # Nastaveni limitu v prazskem case (od MIN_HOUR do MAX_HOUR)
         check_time = PRG_TZ.localize(target_date.replace(hour=MIN_HOUR, minute=0, second=0))
         end_limit = PRG_TZ.localize(target_date.replace(hour=MAX_HOUR, minute=0, second=0))
 
+        # Hledame hodinove bloky (2 po sobe jdouci 30min sloty)
         while check_time < end_limit:
             next_time = check_time + timedelta(minutes=30)
             if slots_counter[check_time] < MAX_COURTS and slots_counter[next_time] < MAX_COURTS:
@@ -104,23 +116,37 @@ def scan_current_day(driver, wait, target_date):
             check_time += timedelta(minutes=30)
 
         if times_in_day:
-            return f"{day_name} {day_str_short} | " + ", ".join(times_in_day)
+            result = f"{day_name} {day_str_short} | " + ", ".join(times_in_day)
+            print(f"  -> Nalezeny terminy: {result}")
+            return result
+
+        print(f"  -> Zadny volny termin v case {MIN_HOUR}:00 - {MAX_HOUR}:00.")
         return None
-    except:
+
+    except Exception as e:
+        print(f"[CHYBA] Pri skenovani dne {day_str_short} doslo k chybe: {e}")
+        # Vracime None, aby chyba na jednom dni neshodila cely skript
         return None
 
 def run_checker():
+    print(f"--- Start kontroly: {datetime.now(PRG_TZ).strftime('%Y-%m-%d %H:%M:%S')} ---")
+
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new") # Moderni headless zapis
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
+    # Zrychleni nacteni - ignorujeme obrazky
+    options.add_argument("--blink-settings=imagesEnabled=false")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
 
     try:
+        print("Nacitam stranku rezku...")
         driver.get("https://memberzone.cz/infinit_step_sportcentrum/Scheduler.aspx")
+
+        # Proklikani do spravneho zobrazeni
         wait.until(EC.element_to_be_clickable((By.ID, "HeaderPanel_MyMenu_DXI2_T"))).click()
         time.sleep(2)
         wait.until(EC.element_to_be_clickable((By.ID, "LeftPanel_LeftPanelContent_RadioButtonsGroupBox_ASPxButton3_CD"))).click()
@@ -130,36 +156,51 @@ def run_checker():
         now_prg = datetime.now(PRG_TZ)
 
         for target_date in MY_DATES:
-            # Kontrola, zda den jiz neprosel
+            # Kontrola, zda den jiz neprosel (vcetne dneska, pokud je po 21:00)
             if target_date.date() < now_prg.date():
+                continue
+            if target_date.date() == now_prg.date() and now_prg.hour >= MAX_HOUR:
                 continue
 
             print(f"Proveruji: {target_date.strftime('%d.%m.')}")
+
+            # Skok na datum pomoci JS DevExpress API
             js_goto = f"ASPxClientControl.GetControlCollection().GetByName('ctl00_PageContent_Scheduler').GotoDate(new Date({target_date.year}, {target_date.month - 1}, {target_date.day}));"
             driver.execute_script(js_goto)
 
             line = scan_current_day(driver, wait, target_date)
-            if line: report_lines.append(line)
+            if line:
+                report_lines.append(line)
 
-        new_report = "\n".join(report_lines) if report_lines else ""
+        # Vyhodnoceni reportu
+        new_report = "\n".join(report_lines).strip()
         cache_file = "last_report.txt"
         old_report = ""
 
         if os.path.exists(cache_file):
-            with open(cache_file, "r") as f: old_report = f.read()
+            with open(cache_file, "r", encoding="utf-8") as f:
+                old_report = f.read().strip()
 
+        print("\n--- VYHODNOCENI ---")
         if new_report == old_report:
-            print("Zadna zmena v terminech.")
+            print("Zadna zmena v terminech oproti minule kontrole.")
         else:
             if new_report:
+                print("ZMENA: Byly nalezeny nove terminy! Odesilam WhatsApp.")
                 msg = "*BADMINTON - NOVE TERMINY:* \n\n" + new_report
                 send_whatsapp(msg)
             elif old_report:
+                print("ZMENA: Vsechny sledovane terminy zmyzely (jsou obsazene). Odesilam WhatsApp.")
                 send_whatsapp("*BADMINTON:* Vsechny sledovane terminy jsou jiz obsazene.")
 
-            with open(cache_file, "w") as f: f.write(new_report)
+            # Ulozeni noveho stavu do cache az po uspesnem odeslani
+            with open(cache_file, "w", encoding="utf-8") as f:
+                f.write(new_report)
 
+    except Exception as e:
+        print(f"[KRITICKA CHYBA] Hlavni smycka selhala: {e}")
     finally:
+        print("Ukoncuji WebDriver.")
         driver.quit()
 
 if __name__ == "__main__":
