@@ -2,7 +2,7 @@ name: Badminton Checker Bot
 
 on:
   schedule:
-    - cron: '27 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 # Povoleni pro zapis do repozitare (nutne pro git-auto-commit-action)
