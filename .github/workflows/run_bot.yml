@@ -16,8 +16,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Nastaveni tokenu je nutne, aby mohl commit spustit dalsi procesy (pokud nejake mas)
-          # a aby mel spravna prava k zapisu.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -37,7 +35,9 @@ jobs:
           WA_API_KEY: ${{ secrets.WA_API_KEY }}
           WA_PHONE_2: ${{ secrets.WA_PHONE_2 }}
           WA_API_KEY_2: ${{ secrets.WA_API_KEY_2 }}
-        run: python init.py
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_LIST: ${{ secrets.EMAIL_LIST }}
 
       - name: Ulozit zmeny zpet do repozitare
         uses: stefanzweifel/git-auto-commit-action@v5

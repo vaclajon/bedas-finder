@@ -5,6 +5,8 @@ import urllib3
 import requests
 import unicodedata
 import pytz
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 from selenium import webdriver
@@ -14,6 +16,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+import json
 
 # --- SSL & SYSTEMOVY BYPASS ---
 os.environ['WDM_SSL_VERIFY'] = '0'
@@ -28,23 +31,27 @@ MIN_HOUR = 17
 MAX_HOUR = 21
 MAX_COURTS = 12
 
-import json
-
 MY_DATES = []
 try:
     with open("config.json", "r", encoding="utf-8") as f:
         config = json.load(f)
-        # Ocekava format YYYY-MM-DD
         for d_str in config.get("dates", []):
             MY_DATES.append(datetime.strptime(d_str, "%Y-%m-%d"))
 except Exception as e:
     print(f"[VAROVANI] Nepodarilo se nacist config.json: {e}")
 
-# --- PRIJEMCI (Nacitaji se z GitHub Secrets) ---
+# --- PRIJEMCI (Nacitaji se z GitHub Secrets a Env proměnných) ---
 RECIPIENTS = [
     (os.getenv("WA_PHONE"), os.getenv("WA_API_KEY")),
     (os.getenv("WA_PHONE_2"), os.getenv("WA_API_KEY_2")),
 ]
+
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+# Nacteni seznamu emailu z env promenne (ocekava carkou oddelene maily)
+_emails_env = os.getenv("EMAIL_LIST", "")
+EMAILS = [e.strip() for e in _emails_env.split(",") if e.strip()]
 
 DAYS_MAP = {0: "Po", 1: "Ut", 2: "St", 3: "Ct", 4: "Pa", 5: "So", 6: "Ne"}
 
@@ -71,6 +78,30 @@ def send_whatsapp(message):
                 print(f"[CHYBA] CallMeBot API vratilo status {response.status_code} pro {phone}")
         except Exception as e:
             print(f"[CHYBA] Selhalo odesilani WhatsApp pro {phone}: {e}")
+
+def send_email(message):
+    if not EMAIL_USER or not EMAIL_PASS:
+        print("[INFO] Nejsou nastavene udaje pro E-mail (EMAIL_USER / EMAIL_PASS).")
+        return
+    if not EMAILS:
+        return
+
+    try:
+        msg = MIMEText(message, 'plain', 'utf-8')
+        msg['Subject'] = '🏸 Badminton Bot - Aktualizace terminu'
+        msg['From'] = EMAIL_USER
+        # Pouzivame Bcc (skryta kopie), aby hraci nevideli emaily ostatnich
+        msg['Bcc'] = ", ".join(EMAILS)
+
+        # Pouzivame Gmail SMTP jako default
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
+        print(f"[OK] E-mail uspesne odeslan na {len(EMAILS)} adres.")
+    except Exception as e:
+        print(f"[CHYBA] Selhalo odesilani E-mailu: {e}")
 
 def scan_current_day(driver, wait, target_date):
     day_str_short = target_date.strftime('%d.%m.')
@@ -186,12 +217,15 @@ def run_checker():
             print("Zadna zmena v terminech oproti minule kontrole.")
         else:
             if new_report:
-                print("ZMENA: Byly nalezeny nove terminy! Odesilam WhatsApp.")
-                msg = "*BADMINTON - NOVE TERMINY:* \n\n" + new_report
+                print("ZMENA: Byly nalezeny nove terminy! Odesilam upozorneni.")
+                msg = "*🏸 BADMINTON - NOVE TERMINY:* \n\n" + new_report
                 send_whatsapp(msg)
+                send_email(msg)
             elif old_report:
-                print("ZMENA: Vsechny sledovane terminy zmyzely (jsou obsazene). Odesilam WhatsApp.")
-                send_whatsapp("*BADMINTON:* Vsechny sledovane terminy jsou jiz obsazene.")
+                print("ZMENA: Vsechny sledovane terminy zmyzely (jsou obsazene). Odesilam upozorneni.")
+                msg = "*🏸 BADMINTON:* Vsechny sledovane terminy jsou jiz obsazene."
+                send_whatsapp(msg)
+                send_email(msg)
 
             # Ulozeni noveho stavu do cache az po uspesnem odeslani
             with open(cache_file, "w", encoding="utf-8") as f:
