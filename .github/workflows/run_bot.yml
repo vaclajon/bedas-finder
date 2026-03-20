@@ -2,8 +2,12 @@ name: Badminton Checker Bot
 
 on:
   schedule:
-    - cron: '23 * * * *'
+    - cron: '27 * * * *'
   workflow_dispatch:
+
+# Povoleni pro zapis do repozitare (nutne pro git-auto-commit-action)
+permissions:
+  contents: write
 
 jobs:
   check:
@@ -11,14 +15,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Restore cache
-        uses: actions/cache/restore@v4
         with:
-          path: last_report.txt
-          key: badminton-report-${{ github.run_id }}
-          restore-keys: |
-            badminton-report-
+          # Nastaveni tokenu je nutne, aby mohl commit spustit dalsi procesy (pokud nejake mas)
+          # a aby mel spravna prava k zapisu.
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,9 +39,8 @@ jobs:
           WA_API_KEY_2: ${{ secrets.WA_API_KEY_2 }}
         run: python init.py
 
-      - name: Save cache
-        if: always()
-        uses: actions/cache/save@v4
+      - name: Ulozit zmeny zpet do repozitare
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          path: last_report.txt
-          key: badminton-report-${{ github.run_id }}
+          commit_message: "🤖 Aktualizace reportu bota (last_report.txt)"
+          file_pattern: 'last_report.txt'

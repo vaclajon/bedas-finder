@@ -58,6 +58,22 @@
         </div>
     </section>
 
+    <!-- Posledni report (Nově přidáno) -->
+    <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold flex items-center space-x-2">
+                <i data-lucide="bell-ring" class="w-5 h-5 text-amber-500"></i>
+                <span>Poslední stav termínů</span>
+            </h2>
+            <button onclick="loadReportFromGitHub()" class="text-gray-400 hover:text-blue-500 transition-colors" title="Obnovit report">
+                <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div id="reportContent" class="min-h-[60px] flex flex-col justify-center">
+            <span class="text-gray-400 text-sm italic">Vyplň nastavení pro načtení reportu...</span>
+        </div>
+    </section>
+
     <!-- Sprava terminu -->
     <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <div class="flex items-center justify-between mb-6">
@@ -114,7 +130,7 @@
 
         if (savedRepo && savedToken) {
             toggleSettings(false); // Zavrit nastaveni
-            loadFromGitHub();
+            loadAllData();
         } else {
             renderList();
         }
@@ -221,10 +237,17 @@
         localStorage.setItem('bb_repo', repo);
         localStorage.setItem('bb_token', token);
         toggleSettings(false);
+        loadAllData();
+    }
+
+    function loadAllData() {
         loadFromGitHub();
+        loadReportFromGitHub();
     }
 
     // --- GITHUB API ---
+
+    // Nacteni terminu (config.json)
     async function loadFromGitHub() {
         const repo = localStorage.getItem('bb_repo');
         const token = localStorage.getItem('bb_token');
@@ -264,6 +287,53 @@
         }
     }
 
+    // Nacteni posledniho reportu bota (last_report.txt)
+    async function loadReportFromGitHub() {
+        const repo = localStorage.getItem('bb_repo');
+        const token = localStorage.getItem('bb_token');
+        const reportContainer = document.getElementById('reportContent');
+
+        if (!repo || !token) return;
+
+        try {
+            reportContainer.innerHTML = '<span class="text-gray-400 text-sm flex items-center space-x-2"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Načítám poslední data...</span></span>';
+            lucide.createIcons();
+
+            const response = await fetch(`https://api.github.com/repos/${repo}/contents/last_report.txt`, {
+                headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' }
+            });
+
+            if (response.status === 404) {
+                reportContainer.innerHTML = `
+                        <div class="bg-yellow-50 text-yellow-800 p-4 rounded-lg text-sm border border-yellow-200">
+                            <b>Soubor last_report.txt zatím neexistuje.</b><br>
+                            Aby se tu termíny ukázaly, musí tvůj GitHub Actions workflow tento soubor commitovat zpět do repozitáře (použij např. <i>stefanzweifel/git-auto-commit-action</i>).
+                        </div>`;
+                return;
+            }
+
+            if (!response.ok) throw new Error('API vrátilo chybu: ' + response.statusText);
+
+            const data = await response.json();
+
+            // Dekodovani Base64 UTF-8
+            const textContent = decodeURIComponent(escape(atob(data.content))).trim();
+
+            if (textContent === '') {
+                reportContainer.innerHTML = '<div class="text-gray-500 text-sm py-2"><i data-lucide="check" class="w-4 h-4 inline text-green-500 mr-1"></i>V posledním běhu nebyly nalezeny žádné volné termíny pro sledované dny.</div>';
+            } else {
+                reportContainer.innerHTML = `<pre class="whitespace-pre-wrap font-mono text-sm text-gray-800 bg-amber-50/50 p-4 rounded-lg border border-amber-100/50 leading-relaxed">${textContent}</pre>`;
+            }
+            lucide.createIcons();
+
+        } catch (error) {
+            console.error(error);
+            reportContainer.innerHTML = '<span class="text-red-400 text-sm flex items-center"><i data-lucide="alert-triangle" class="w-4 h-4 mr-1"></i>Nepodařilo se načíst poslední report.</span>';
+            lucide.createIcons();
+        }
+    }
+
+    // Ulozeni dat (config.json) do repozitare
     async function saveToGitHub() {
         const repo = localStorage.getItem('bb_repo');
         const token = localStorage.getItem('bb_token');
