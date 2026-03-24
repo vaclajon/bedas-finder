@@ -7,6 +7,7 @@ import unicodedata
 import pytz
 import smtplib
 from email.mime.text import MIMEText
+import email.utils
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 from selenium import webdriver
@@ -93,13 +94,35 @@ def send_email(message):
         # Pouzivame Bcc (skryta kopie), aby hraci nevideli emaily ostatnich
         msg['Bcc'] = ", ".join(EMAILS)
 
+        # --- LOGIKA PRO SHLUKOVANI DO VLAKNA ---
+        msg_id_file = "last_email_id.txt"
+        old_msg_id = None
+        if os.path.exists(msg_id_file):
+            with open(msg_id_file, "r", encoding="utf-8") as f:
+                old_msg_id = f.read().strip()
+
+        # Vygenerujeme nove unikatni ID pro tento e-mail
+        new_msg_id = email.utils.make_msgid(domain="badmintonbot.local")
+        msg['Message-ID'] = new_msg_id
+
+        # Pokud mame stare ID, odkazeme na nej, cimz vznikne vlakno (Thread)
+        if old_msg_id:
+            msg['In-Reply-To'] = old_msg_id
+            msg['References'] = old_msg_id
+        # ---------------------------------------
+
         # Pouzivame Gmail SMTP jako default
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
         server.quit()
-        print(f"[OK] E-mail uspesne odeslan na {len(EMAILS)} adres.")
+
+        # Ulozeni noveho ID do souboru pro dalsi beh bota
+        with open(msg_id_file, "w", encoding="utf-8") as f:
+            f.write(new_msg_id)
+
+        print(f"[OK] E-mail uspesne odeslan na {len(EMAILS)} adres (Vlakno: {new_msg_id}).")
     except Exception as e:
         print(f"[CHYBA] Selhalo odesilani E-mailu: {e}")
 
